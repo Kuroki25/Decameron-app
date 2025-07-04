@@ -17,5 +17,6 @@ class ServiceServiceProvider extends ServiceProvider
         $this->app->bind(HotelRepositoryInterface::class, HotelRepository::class);
         // Service
         $this->app->bind(HotelServiceInterface::class, HotelService::class);
+        
     }
 }
