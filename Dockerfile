@@ -12,7 +12,6 @@ RUN docker-php-ext-install pdo pdo_pgsql mbstring zip exif pcntl \
     && pecl install apcu \
     && docker-php-ext-enable apcu opcache
 COPY ./docker/php/conf.d/ /usr/local/etc/php/conf.d/
-COPY ./docker/php/fpm/zz-fpm.conf /usr/local/etc/php-fpm.d/zz-fpm.conf
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 WORKDIR /app
 COPY composer.json composer.lock ./
@@ -27,9 +26,8 @@ RUN composer dump-autoload --optimize --classmap-authoritative \
     && php -d opcache.enable_cli=1 -d opcache.jit_buffer_size=50M artisan-opcache-preload:generate
 
 FROM php:8.2-fpm-alpine AS production
-RUN apk add --no-cache libpq oniguruma libzip tzdata curl
+RUN apk add --no-cache libpq oniguruma libzip tzdata
 COPY --from=builder /usr/local/etc/php/conf.d/ /usr/local/etc/php/conf.d/
-COPY --from=builder /usr/local/etc/php-fpm.d/zz-fpm.conf /usr/local/etc/php-fpm.d/zz-fpm.conf
 COPY --from=builder /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
 RUN addgroup -g 1000 laravel && \
     adduser -u 1000 -G laravel -s /bin/sh -D laravel
@@ -38,6 +36,4 @@ COPY --from=builder /app .
 RUN chown -R laravel:laravel storage bootstrap/cache
 USER laravel
 EXPOSE 9000
-HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:9000/ping || exit 1
 CMD ["php-fpm"]
