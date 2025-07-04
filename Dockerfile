@@ -15,7 +15,7 @@ RUN apk add --no-cache --virtual .build-deps \
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 WORKDIR /app
 COPY composer.json composer.lock ./
-RUN --mount=type=cache,id=composer_cache,target=/root/.cache/composer \
+RUN --mount=type=cache,id=composer,target=/root/.cache/composer \
     composer install --prefer-dist --no-scripts --no-autoloader --no-interaction
 RUN apk del .build-deps
 
