@@ -1,36 +1,73 @@
-# Etapa de build
-FROM php:8.2-fpm AS builder
+FROM php:8.2-fpm-alpine AS builder
 
-# Instala extensiones necesarias
-RUN apt-get update && apt-get install -y \
-    libpq-dev zip unzip \
-  && docker-php-ext-install pdo_pgsql mbstring
+ARG COMPOSER_HOME="/composer"
+ENV COMPOSER_HOME=${COMPOSER_HOME} \
+    COMPOSER_MEMORY_LIMIT=-1 \
+    APP_ENV=production
 
-# Instala Composer
+RUN apk add --no-cache --virtual .build-deps \
+      $PHPIZE_DEPS \
+      git \
+      unzip \
+      curl \
+      oniguruma-dev \
+      libzip-dev \
+      postgresql-dev \
+      tzdata \
+  && pecl install apcu \
+  && docker-php-ext-enable apcu \
+  && docker-php-ext-install \
+      pdo_pgsql \
+      mbstring \
+      zip \
+  && docker-php-source delete \
+  && apk del .build-deps
+
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-WORKDIR /var/www/html
+WORKDIR /app
 
-# Sólo dependencias PHP
 COPY composer.json composer.lock ./
-RUN composer install --no-dev --optimize-autoloader
+RUN --mount=type=cache,target=/root/.cache/composer \
+    composer install --no-dev --no-scripts --prefer-dist \
+      --optimize-autoloader --classmap-authoritative
 
-# Copia el resto del código
 COPY . .
 
-# Genera la clave y ejecuta migraciones (opcional aquí o en comando de inicio)
-RUN php artisan key:generate
+RUN composer run-script post-install-cmd \
+  && php artisan clear-compiled \
+  && php artisan optimize \
+  && addgroup -g 1000 appuser \
+  && adduser -u 1000 -G appuser -s /bin/sh -D appuser \
+  && mkdir -p storage bootstrap/cache \
+  && chown -R appuser:appuser storage bootstrap/cache
 
-# Etapa final
-FROM php:8.2-fpm-alpine
+FROM builder AS tests
 
-RUN apk add --no-cache libpq
+USER appuser
 
-COPY --from=builder /var/www/html /var/www/html
+RUN --mount=type=cache,target=/root/.cache/composer \
+    vendor/bin/phpunit --stop-on-failure
 
-WORKDIR /var/www/html
+FROM php:8.2-fpm-alpine AS production
 
-EXPOSE 80
+LABEL maintainer="tu-email@dominio.com"
 
-# Usa el servidor integrado para simplificar despliegue
-CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=80"]
+RUN apk add --no-cache \
+      libpq \
+      oniguruma \
+      libzip \
+      tzdata
+
+COPY --from=builder /usr/local/etc/php/conf.d /usr/local/etc/php/conf.d
+COPY --from=builder /app /app
+
+WORKDIR /app
+
+USER appuser
+
+EXPOSE 9000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s \
+  CMD php artisan route:cache || exit 1
+
+CMD ["php-fpm"]
