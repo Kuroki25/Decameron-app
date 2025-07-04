@@ -1,6 +1,5 @@
 # --- Etapa Base ---
 FROM php:8.2-fpm-alpine AS base
-ARG RAILWAY_SERVICE_ID
 RUN apk add --no-cache libpq oniguruma libzip tzdata
 RUN docker-php-ext-install pdo pdo_pgsql mbstring zip exif pcntl \
     && pecl install apcu \
@@ -18,8 +17,7 @@ RUN apk add --no-cache --virtual .build-deps \
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 WORKDIR /app
 COPY composer.json composer.lock ./
-RUN --mount=type=cache,id=s/$RAILWAY_SERVICE_ID-/root/.cache/composer,target=/root/.cache/composer \
-    composer install --prefer-dist --no-scripts --no-autoloader --no-interaction
+RUN composer install --prefer-dist --no-scripts --no-autoloader --no-interaction
 RUN apk del .build-deps
 
 # --- Etapa de Construcción de la App ---
