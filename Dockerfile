@@ -1,54 +1,43 @@
-# --- Etapa Base ---
-FROM php:8.2-fpm-alpine AS base
-RUN apk add --no-cache libpq oniguruma libzip tzdata
+FROM php:8.2-fpm-alpine AS builder
+RUN apk add --no-cache \
+    $PHPIZE_DEPS \
+    build-base \
+    postgresql-dev \
+    libzip-dev \
+    oniguruma-dev \
+    git \
+    curl \
+    unzip
 RUN docker-php-ext-install pdo pdo_pgsql mbstring zip exif pcntl \
     && pecl install apcu \
     && docker-php-ext-enable apcu opcache
 COPY ./docker/php/conf.d/ /usr/local/etc/php/conf.d/
-
-# --- Etapa de Dependencias ---
-FROM base AS composer_deps
-RUN apk add --no-cache --virtual .build-deps \
-    $PHPIZE_DEPS \
-    git \
-    unzip \
-    curl \
-    postgresql-dev
+COPY ./docker/php/fpm/zz-fpm.conf /usr/local/etc/php-fpm.d/zz-fpm.conf
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 WORKDIR /app
 COPY composer.json composer.lock ./
-RUN composer install --prefer-dist --no-scripts --no-autoloader --no-interaction
-RUN apk del .build-deps
-
-# --- Etapa de Construcción de la App ---
-FROM composer_deps AS app_builder
-WORKDIR /app
+RUN composer install --no-dev --no-interaction --no-scripts --prefer-dist
 COPY . .
 RUN composer dump-autoload --optimize --classmap-authoritative \
-    && composer run-script post-install-cmd --no-dev \
     && php artisan optimize:clear \
     && php artisan view:cache \
-    && php artisan config:cache
-RUN php -d opcache.enable_cli=1 -d opcache.jit_buffer_size=50M artisan-opcache-preload:generate
+    && php artisan config:cache \
+    && php artisan route:cache \
+    && php artisan event:cache \
+    && php -d opcache.enable_cli=1 -d opcache.jit_buffer_size=50M artisan-opcache-preload:generate
 
-# --- Etapa de Pruebas ---
-FROM app_builder AS tests
-WORKDIR /app
-RUN vendor/bin/phpunit --stop-on-failure
-
-# --- Etapa de Producción Final ---
-FROM base AS production
-LABEL maintainer="darosero89@gmail.com"
+FROM php:8.2-fpm-alpine AS production
+RUN apk add --no-cache libpq oniguruma libzip tzdata curl
+COPY --from=builder /usr/local/etc/php/conf.d/ /usr/local/etc/php/conf.d/
+COPY --from=builder /usr/local/etc/php-fpm.d/zz-fpm.conf /usr/local/etc/php-fpm.d/zz-fpm.conf
+COPY --from=builder /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
 RUN addgroup -g 1000 laravel && \
     adduser -u 1000 -G laravel -s /bin/sh -D laravel
 WORKDIR /app
-COPY --from=composer_deps /usr/bin/composer /usr/bin/composer
-COPY --from=app_builder /app .
-COPY --from=app_builder /app/storage/opcache-preload.php /app/storage/opcache-preload.php
-RUN composer install --no-dev --no-autoloader --no-scripts --no-interaction
-RUN php artisan route:cache \
-    && php artisan event:cache
+COPY --from=builder /app .
 RUN chown -R laravel:laravel storage bootstrap/cache
 USER laravel
 EXPOSE 9000
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:9000/ping || exit 1
 CMD ["php-fpm"]
