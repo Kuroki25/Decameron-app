@@ -18,20 +18,20 @@ WORKDIR /var/www/html
 COPY composer.json composer.lock ./
 RUN composer install --no-dev --optimize-autoloader --no-scripts
 
-# 4) Copia el resto de tu código y genera la key
+# 4) Copia el resto de tu código
 COPY . .
-# RUN cp .env.example .env \
-#  && composer run-script post-autoload-dump \
-#  && php artisan package:discover --ansi \
-#  && php artisan key:generate
 
 # ┌───────────────────────────────────────────────────────────────────────────────
 # │ Etapa 2: runtime (Alpine-based)
 # └───────────────────────────────────────────────────────────────────────────────
 FROM php:8.2-fpm-alpine
 
-# 1) Instala cliente de Postgres + oniguruma + herramientas de compilación
-#    para que docker-php-ext-install funcione en Alpine
+
+ENV CACHE_DRIVER=file \
+    SESSION_DRIVER=cookie \
+    QUEUE_CONNECTION=database
+
+
 RUN apk add --no-cache \
       libpq-dev \
       oniguruma-dev \
@@ -41,15 +41,13 @@ RUN apk add --no-cache \
 
 WORKDIR /var/www/html
 
-# 2) Copia todo lo que dejó el builder (código, vendor, artisan, etc)
+
 COPY --from=builder /var/www/html /var/www/html
 
 EXPOSE 80
 
-# 3) Limpia configuração cacheada y arranca el servidor
-CMD ["sh", "-c", "\
-    php artisan config:clear && \
-    php artisan cache:clear && \
-    php artisan migrate --force && \
-    php artisan serve --host=0.0.0.0 --port=80 \
-"]
+
+ENTRYPOINT ["sh", "-c"]
+
+
+CMD ["php artisan config:clear && php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=80"]
