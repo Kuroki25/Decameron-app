@@ -26,12 +26,11 @@ COPY . .
 # └───────────────────────────────────────────────────────────────────────────────
 FROM php:8.2-fpm-alpine
 
-
 ENV CACHE_DRIVER=file \
     SESSION_DRIVER=cookie \
     QUEUE_CONNECTION=database
 
-
+# Instala pdo_pgsql y mbstring en Alpine
 RUN apk add --no-cache \
       libpq-dev \
       oniguruma-dev \
@@ -41,13 +40,15 @@ RUN apk add --no-cache \
 
 WORKDIR /var/www/html
 
-
+# Trae todo lo generado por el builder
 COPY --from=builder /var/www/html /var/www/html
 
 EXPOSE 80
 
-
 ENTRYPOINT ["sh", "-c"]
 
-
-CMD ["php artisan config:clear && php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=80"]
+# Aquí añadimos el --seed al migrate para que ejecute seeders automáticos
+CMD ["php artisan config:clear && \
+     php artisan cache:clear && \
+     php artisan migrate --force --seed && \
+     php artisan serve --host=0.0.0.0 --port=80"]
