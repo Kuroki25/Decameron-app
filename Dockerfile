@@ -1,36 +1,48 @@
-# Etapa de build
-FROM php:8.2-fpm AS builder
+FROM php:8.2-fpm-alpine AS base
+RUN apk add --no-cache libpq oniguruma libzip tzdata
+RUN docker-php-ext-install pdo pdo_pgsql mbstring zip exif pcntl \
+    && pecl install apcu \
+    && docker-php-ext-enable apcu opcache
+COPY ./docker/php/conf.d/ /usr/local/etc/php/conf.d/
 
-# Instala extensiones necesarias
-RUN apt-get update && apt-get install -y \
-    libpq-dev zip unzip \
-  && docker-php-ext-install pdo_pgsql mbstring
-
-# Instala Composer
+FROM base AS composer_deps
+RUN apk add --no-cache --virtual .build-deps \
+    $PHPIZE_DEPS \
+    git \
+    unzip \
+    curl \
+    postgresql-dev
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
-
-WORKDIR /var/www/html
-
-# Sólo dependencias PHP
+WORKDIR /app
 COPY composer.json composer.lock ./
-RUN composer install --no-dev --optimize-autoloader
+RUN --mount=type=cache,id=composer_cache,target=/root/.cache/composer \
+    composer install --prefer-dist --no-scripts --no-autoloader --no-interaction
+RUN apk del .build-deps
 
-# Copia el resto del código
+FROM composer_deps AS app_builder
+WORKDIR /app
 COPY . .
+RUN composer dump-autoload --optimize --classmap-authoritative \
+    && composer run-script post-install-cmd --no-dev \
+    && php artisan optimize:clear
 
-# Genera la clave y ejecuta migraciones (opcional aquí o en comando de inicio)
-RUN php artisan key:generate
+FROM app_builder AS tests
+WORKDIR /app
+RUN vendor/bin/phpunit --stop-on-failure
 
-# Etapa final
-FROM php:8.2-fpm-alpine
-
-RUN apk add --no-cache libpq
-
-COPY --from=builder /var/www/html /var/www/html
-
-WORKDIR /var/www/html
-
-EXPOSE 80
-
-# Usa el servidor integrado para simplificar despliegue
-CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=80"]
+FROM base AS production
+LABEL maintainer="darosero89@gmail.com"
+RUN addgroup -g 1000 laravel && \
+    adduser -u 1000 -G laravel -s /bin/sh -D laravel
+WORKDIR /app
+COPY --from=composer_deps /usr/bin/composer /usr/bin/composer
+COPY --from=app_builder /app .
+RUN composer install --no-dev --no-autoloader --no-scripts --no-interaction
+RUN php artisan config:cache \
+    && php artisan route:cache \
+    && php artisan view:cache \
+    && php artisan event:cache
+RUN chown -R laravel:laravel storage bootstrap/cache
+USER laravel
+EXPOSE 9000
+CMD ["php-fpm"]
