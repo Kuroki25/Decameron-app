@@ -20,10 +20,10 @@ RUN composer install --no-dev --optimize-autoloader --no-scripts
 
 # 4) Copia el resto de tu código y genera la key
 COPY . .
-RUN cp .env.example .env \
- && composer run-script post-autoload-dump \
- && php artisan package:discover --ansi \
- && php artisan key:generate
+# RUN cp .env.example .env \
+#  && composer run-script post-autoload-dump \
+#  && php artisan package:discover --ansi \
+#  && php artisan key:generate
 
 # ┌───────────────────────────────────────────────────────────────────────────────
 # │ Etapa 2: runtime (Alpine-based)
